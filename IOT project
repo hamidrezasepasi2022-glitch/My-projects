@@ -1,1 +1,342 @@
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include <TimeLib.h>
 
+
+#define BLYNK_TEMPLATE_ID "TMPL4q9KQernt"
+#define BLYNK_TEMPLATE_NAME "weather proj"
+#define BLYNK_AUTH_TOKEN       "ue6FOES_DF72k8tVbyJxK9gdKemp6CM5"
+
+#define BLYNK_PRINT Serial
+
+//  
+// v4 api address
+
+//https://blynk.cloud/external/api/data/get?token=ue6FOES_DF72k8tVbyJxK9gdKemp6CM5&period=HOUR&granularityType=HOURLY&sourceType=MAX&output=FILE&pin=V5
+//https://blynk.cloud/external/api/data/get?token=ue6FOES_DF72k8tVbyJxK9gdKemp6CM5&period=HOUR&granularityType=HOURLY&sourceType=MAX&output=FILE&pin=V5
+
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <BlynkSimpleEsp32.h>
+#include "DHT.h"
+
+
+
+char ssid[] = "Hamidreza";
+
+char pass[] = "87654321";
+
+BlynkTimer timer;
+
+// This function is called every time the Virtual Pin 0 state changes
+
+BLYNK_WRITE(V0)
+
+{
+
+  // Set incoming value from pin V0 to a variable
+
+  int value = param.asInt();
+
+  Blynk.virtualWrite(V1, value);
+
+}
+
+
+// This function is called every time the device is connected to the Blynk.Cloud
+
+BLYNK_CONNECTED()
+
+{
+
+  // Change Web Link Button message to "Congratulations!"
+
+  Blynk.setProperty(V3, "offImageUrl", "https://static-image.nyc3.cdn.digitaloceanspaces.com/general/fte/congratulations.png");
+
+  Blynk.setProperty(V3, "onImageUrl",  "https://static-image.nyc3.cdn.digitaloceanspaces.com/general/fte/congratulations_pressed.png");
+
+  Blynk.setProperty(V3, "url", "https://docs.blynk.io/en/getting-started/what-do-i-need-to-blynk/how-quickstart-device-was-made");
+
+}
+
+// This function sends Arduino's uptime every second to Virtual Pin 2.
+
+void myTimerEvent()
+
+{
+
+  // You can send any value at any time.
+  // Please don't send more that 10 values per second.
+  Blynk.virtualWrite(V2, millis() / 1000);
+
+}
+// stages for data received by dht11
+
+// 0-dry and arid 1-muggy or humid heat 2- ideal temp 3-damp and cold
+
+
+
+#include "DHT.h"
+
+#define DHTPIN 5
+#define DHTPIN2 32   
+
+int windpin = 33;
+int lightpin = 34;
+
+#define DHTTYPE DHT11
+
+
+
+
+//file read function 
+
+void readFile(fs::FS &fs, const char * path){
+  Serial.printf("Reading file: %s\n", path);
+
+  File file = fs.open(path);
+  if(!file){
+    Serial.println("Failed to open file for reading");
+    return;
+  }
+
+  Serial.print("Read from file: ");
+  while(file.available()){
+    Serial.write(file.read()); 
+  }
+  file.close();
+}
+
+
+
+String climates[] = { "dry and warm", "warm", "humid and warm", "dry but ideal", "ideal", "humid and ideal", "dry and cold", "cold", "humid and cold" };
+
+
+
+String lightmodes[] = { "night or shadow","sunny" };
+
+
+
+String windmodes[] = { "calm", "breezy", "storm" };
+
+DHT dht1(DHTPIN, DHTTYPE);
+DHT dht2(DHTPIN2, DHTTYPE);
+
+int dhtclzone1;
+int dhtclzone2;
+
+int lightzone;
+
+int windzone;
+
+
+
+void setup() {
+
+  setTime(17, 45, 0, 7, 7, 2026);
+  readFile(SD,"/data.txt");
+
+  
+
+  Serial.begin(115200);
+
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_6db);
+
+  
+
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  
+
+
+
+  timer.setInterval(1000L, myTimerEvent);
+
+
+
+  Serial.println("start");
+
+
+
+  
+
+  dht1.begin();
+  dht2.begin();
+}
+
+
+
+void loop() {
+
+  
+
+  Blynk.run();
+
+  timer.run();
+
+
+
+  // delay(2000);
+
+
+
+  float humidity1 = dht1.readHumidity();
+  float temp1 = dht1.readTemperature();
+  
+  // 2. Read Second DHT11 Data (Pin 2)
+  float humidity2 = dht2.readHumidity();
+  float temp2 = dht2.readTemperature();
+
+  int wind = analogRead(windpin);
+  int light = analogRead(lightpin);
+
+  int windoutput = map(wind,750,1900,0,10); // 0 no wind 1 to 4 breezy and more than 4 or 5 storm
+
+  
+  if (isnan(wind) || isnan(light)){
+    Serial.println("faild to read wind or light level");
+  }
+
+
+  // Check if the sensor returned a valid reading
+
+  if (isnan(humidity1) || isnan(temp1) || isnan(temp2) || isnan(humidity2) ) {
+
+    Serial.println("failed to read DHT data");
+
+    return;
+
+  }
+
+  //pyranometer
+  if (light > 0){
+
+    lightzone = 1;
+
+  }else{lightzone = 0;}
+
+
+  //conditions for anemometer
+
+
+  if (windoutput < 4 and windoutput > 0){
+    windzone = 1;
+
+  }else if (windoutput >= 4 and windzone <= 10){
+    windzone = 2;
+  
+  }else if (windoutput == 0){windzone = 0;}
+  else{Serial.println("windzone unidentified !!!!!"); }
+
+
+
+
+
+  //dht 11 number 1 
+  if (temp1 >= 27) {
+    if (humidity1 <= 40) dhtclzone1 = 0;
+    else if (humidity1 > 40 && humidity1 <= 60) dhtclzone1 = 1;
+    else dhtclzone1 = 2;
+  } else if (temp1 < 27 && temp1 >= 16) {
+    if (humidity1 <= 40) dhtclzone1 = 3;
+    else if (humidity1 > 40 && humidity1 <= 60) dhtclzone1 = 4;
+    else dhtclzone1 = 5;
+  } else if (temp1 < 16) {
+    if (humidity1 <= 40) dhtclzone1 = 6;
+    else if (humidity1 > 40 && humidity1 <= 60) dhtclzone1 = 7;
+    else dhtclzone1 = 8;
+  }
+  ///sensor dht11 number 2
+   if (temp2 >= 27) {
+    if (humidity2 <= 40) dhtclzone2 = 0;
+    else if (humidity2 > 40 && humidity2 <= 60) dhtclzone2 = 1;
+    else dhtclzone2 = 2;
+  } else if (temp2 < 27 && temp2 >= 16) {
+    if (humidity2 <= 40) dhtclzone2 = 3;
+    else if (humidity2 > 40 && humidity2 <= 60) dhtclzone2 = 4;
+    else dhtclzone2 = 5;
+  } else if (temp2 < 16) {
+    if (humidity2 <= 40) dhtclzone2 = 6;
+    else if (humidity2 > 40 && humidity2 <= 60) dhtclzone2 = 7;
+    else dhtclzone2 = 8;
+  }
+
+
+
+  // delay(2000);
+
+
+
+
+
+  if(!SD.exists("/data.txt")) {
+    Serial.println("datalog.txt does not exist. Creating it with headers...");
+    File file = SD.open("/data.txt", FILE_WRITE);
+    if(file) {
+      file.println(String(day())+"/",String(month())+"/"+String(year())+"Temp1: " +String(temp1) +" and Temp2: " + String(temp2) + " Humidity1: " + String(humidity1) + " Humidity2: " + String(humidity2)," wind level is: " + windmodes[windzone]+ " light level is : " + lightmodes[lightzone]);
+      file.close();
+      Serial.println("Headers written successfully.");
+    } else {
+      Serial.println("Failed to create initial file.");
+    }
+  }
+}
+
+
+  //dht11 number 1
+  Serial.println("The climate status for DHT1 is : ");
+  Serial.print(climates[dhtclzone1]);
+  Serial.print(F(" Humidity: "));
+  Serial.print(humidity1);
+  Serial.print(F("%  |  Temperature: "));
+  Serial.print(temp1);
+  Serial.println(F("°C"));
+  Serial.println("--------------------------------");
+  // dht11 number 2
+  Serial.println("The climate status for DHT2 is : ");
+  Serial.print(climates[dhtclzone2]);
+  Serial.print(F(" Humidity: "));
+  Serial.print(humidity2);
+  Serial.print(F("%  |  Temperature: "));
+  Serial.print(temp2);
+  Serial.print(F("°C"));
+  Serial.println("--------------------------------");
+  Serial.println("wind output is : " );
+  Serial.println(windmodes[windzone]);
+  Serial.println("***********************");
+  Serial.println(lightmodes[lightzone]);
+  Serial.println("****************************");
+
+
+
+
+  Blynk.virtualWrite(V5, temp1); // Sends the temperature to the V1 Gauge
+
+  Blynk.virtualWrite(V6, humidity1 ); // Sends the humidity to the V2 Gauge
+
+  Blynk.virtualWrite(V4, climates[dhtclzone1]);
+
+  Blynk.virtualWrite(V2, temp2); // Sends the temperature to the V1 Gauge
+
+  Blynk.virtualWrite(V3, humidity2 ); // Sends the humidity to the V2 Gauge
+
+  Blynk.virtualWrite(V1, climates[dhtclzone2]);
+
+  Blynk.virtualWrite(V7, windzone);
+  
+  Blynk.virtualWrite(V8,lightzone );
+
+
+
+
+
+
+
+  // Wait before taking the next reading
+
+  delay(3000);
+
+}
